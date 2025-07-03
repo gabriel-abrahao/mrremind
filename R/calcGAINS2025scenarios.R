@@ -425,6 +425,45 @@ calcGAINS2025scenarios <- function(subtype, agglevel = "agg") {
       outsspefs <- time_interpolate(csspefs, rtime, extrapolation_type = "constant")
       outsspefs <- padMissingSectors(outsspefs, seclist)
 
+      # Final EF consistency checks and adjustments =========================================
+      # These are pretty compute-intensive, but handles some edge cases after aggregation
+
+      # Set negative EFs to zero
+      outsspefs[outsspefs < 0] <- 0
+
+      # Technically, no EF should be smaller than MFR,
+      # except for some cases in VLLO
+      refmfr <- collapseDim(outsspefs[, , "MFR"])
+      diff <- (outsspefs[,,"SMIPVLLO",invert = T] - refmfr) / refmfr
+      tol <- 0.05
+      flag <- diff <= (-1 * tol)
+      flag[is.na(flag)] <- FALSE
+      # Most instances where that happen are ones where
+      # the scenario EF was set to zero, likely due to missing data.
+      fiszero <- flag & outsspefs == 0
+      fnotzero <- flag & outsspefs != 0
+      falltrue <- fiszero
+      falltrue[,,] <- TRUE
+      # If that was the case, set EF to the MFR value
+      outsspefs[fiszero] <- refmfr[fiszero]
+
+      # Warn the user of number of other cases
+      warning(
+        "Found cases where scenario EFs are lower than MFR (",
+        round(100 * tol, 3), "% tolerance) in ",
+        round(100 * sum(fnotzero, na.rm=F) / length(fnotzero), 2), "% of entries\n",
+        "Those EFs are also not zero in either the scenario of MFR\n",
+        "Those cases account for ", 
+        round(100*sum(fnotzero*outsspact, na.rm = T)/sum((falltrue*outsspact), na.rm = T),4),
+        "% of activities\n"
+      )
+      dflag <- as.data.frame(dimSums(fnotzero, c(1)))
+      dflag <- dflag[dflag$Value != 0]
+      names(dflag)
+      unique(dflag$Year)
+      unique(dflag$Data1)
+
+      # Output settings =====================================================================
       out <- outsspefs * conv_kt_per_PJ_to_Tg_per_TWa
       wgt <- mbind(
         lapply(getItems(outsspefs, "scenario"), \(x) add_dimension(
